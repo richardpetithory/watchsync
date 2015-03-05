@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 
-import daemonocle
 import json
 import logging
 import os.path as path
@@ -8,11 +7,21 @@ import subprocess
 import sys
 import time
 
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
+try:
+    import daemonocle
+except ImportError:
+    print "watchsync requires the daemonocle module to be installed."
+    sys.exit(1)
+
+try:
+    from watchdog.observers import Observer
+    from watchdog.events import FileSystemEventHandler
+except ImportError:
+    print "watchsync requires the watchdog module to be installed."
+    sys.exit(1)
 
 
-SETTINGS_FILE = '~/.watchsync.json'
+SETTINGS_FILE = '/etc/watchsync.json'
 
 SETTINGS_DEFAULT = {
     'paths': [
@@ -76,15 +85,22 @@ class RemoteSyncer(FileSystemEventHandler):
 
 
     def on_any_event(self, event):
-        logging.debug("on_any_event")
-        sudo_as = ['sudo', '-u', self.watch.get('sudo_as')]
+        # print event.event_type
+        # print event.is_directory
+        # print event.src_path
+
+        sudo_as = []
+
+        if self.watch.get('sudo_as', None):
+            sudo_as = ['sudo', '-H', '-u', str(self.watch.get('sudo_as'))]
 
         local_path = path.expanduser(self.watch.get('local_path'))
         remote_path = path.expanduser(self.watch.get('remote_path'))
 
-        command_args = [rsync_path, '-vaz', local_path, remote_path]
+        # command_args = sudo_as + [rsync_path, '-vaz', local_path+'/*', remote_path+'/']
+        command_args = sudo_as + ['ls', local_path+'/*']
 
-        process = subprocess.Popen(command_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        process = subprocess.Popen(command_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
 
         while process.poll() == None:
             line = process.stdout.readline().strip()
@@ -93,7 +109,7 @@ class RemoteSyncer(FileSystemEventHandler):
 
 def start():
     logging.basicConfig(
-        filename='watchsync.log',
+        filename='/var/log/watchsync.log',
         level=logging.DEBUG,
         format='%(asctime)s [%(levelname)s] %(message)s',
         )
@@ -125,15 +141,15 @@ def stop():
 if __name__ == "__main__":
     rsync_path = subprocess.check_output(['/usr/bin/which', 'rsync']).strip()
 
-    if not len(rsync_path):
+    if not rsync_path:
         print "rsync executable not found."
-        sys.exit()
+        sys.exit(1)
 
     if len(sys.argv) > 1:
         daemon = daemonocle.Daemon(
             worker=start,
             shutdown_callback=stop,
-            pidfile='/tmp/watchsync.pid',
+            pidfile='/var/run/watchsync.pid',
             )
 
         daemon.do_action(sys.argv[1])
