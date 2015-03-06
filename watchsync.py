@@ -10,29 +10,33 @@ import time
 try:
     import daemonocle
 except ImportError:
-    print "watchsync requires the daemonocle module to be installed."
+    logging.critical("watchsync requires the daemonocle module to be installed.")
+
     sys.exit(1)
 
 try:
     from watchdog.observers import Observer
     from watchdog.events import FileSystemEventHandler
 except ImportError:
-    print "watchsync requires the watchdog module to be installed."
+    logging.critical("watchsync requires the watchdog module to be installed.")
+
     sys.exit(1)
 
 
 SETTINGS_FILE = '/etc/watchsync.json'
 
 SETTINGS_DEFAULT = {
+    'pidfile': '/var/run/watchsync.pid',
+    'logfile': '/var/log/watchsync.log',
     'paths': [
         {
         'sudo_as': '',
         'local_path': '',
-        'remote_path': ''
+        'remote_path': '',
+        'rsync_params': ['-vazq', '--executability', '--delete'],
         }
     ]
 }
-
 
 observers = {}
 rsync_path = ''
@@ -41,7 +45,7 @@ def read_settings():
     settings_file_path = path.expanduser(SETTINGS_FILE)
 
     if not path.exists(settings_file_path):
-        print "Settings file not found."
+        logging.warn("Settings file not found.")
 
         try:
             with open(settings_file_path, 'w') as settings_file:
@@ -52,14 +56,18 @@ def read_settings():
                     sort_keys=True
                     )
 
-                print "Wrote new default settings file to \"{path}\"".format(
-                    path=settings_file_path
+                logging.critical(
+                    "Wrote new default settings file to \"{path}\"".format(
+                        path=settings_file_path
+                        )
                     )
 
             sys.exit(1)
         except Exception:
-            print "Could not write a new default settings file to \"{path}\"".format(
-                path=settings_file_path
+            logging.critical(
+                "Could not write a new default settings file to \"{path}\"".format(
+                    path=settings_file_path
+                    )
                 )
 
             sys.exit(1)
@@ -70,12 +78,15 @@ def read_settings():
 
             return settings
         except Exception:
-            print "Could not read settings file from \"{path}\"".format(
-                path=settings_file_path
+            logging.critical(
+                "Could not read settings file from \"{path}\"".format(
+                    path=settings_file_path
+                    )
                 )
 
             sys.exit(1)
 
+settings = read_settings()
 
 class RemoteSyncer(FileSystemEventHandler):
     def __init__(self, watch):
@@ -90,17 +101,11 @@ class RemoteSyncer(FileSystemEventHandler):
         if self.watch.get('sudo_as', None):
             sudo_as = ['/usr/bin/sudo', '-H', '-u', str(self.watch.get('sudo_as'))]
 
-        local_path = str(path.expanduser(self.watch.get('local_path')))
-        remote_path = str(path.expanduser(self.watch.get('remote_path')))
+        local_path = path.expanduser(self.watch.get('local_path'))
+        remote_path = path.expanduser(self.watch.get('remote_path'))
+        rsync_params = settings.get('rsync_params', ['-vazq', '--executability', '--delete'])
 
-        command_args = sudo_as + [
-            rsync_path,
-            '-vazq',
-            '--executability',
-            '--delete',
-            local_path+'/',
-            remote_path
-            ]
+        command_args = sudo_as + [rsync_path] + rsync_params + [local_path+'/', remote_path]
 
         process = subprocess.Popen(command_args)
 
@@ -113,12 +118,10 @@ class RemoteSyncer(FileSystemEventHandler):
 
 def start():
     logging.basicConfig(
-        filename='/var/log/watchsync.log',
+        filename=settings.get('logfile', '/var/log/watchsync.log'),
         level=logging.WARN,
         format='%(asctime)s [%(levelname)s] %(message)s',
         )
-
-    settings = read_settings()
 
     for watch in settings.get('paths', []):
         local = path.expanduser(watch.get('local_path', ''))
@@ -146,14 +149,15 @@ if __name__ == "__main__":
     rsync_path = subprocess.check_output(['/usr/bin/which', 'rsync']).strip()
 
     if not rsync_path:
-        print "rsync executable not found."
+        logging.critical("rsync executable not found.")
+
         sys.exit(1)
 
     if len(sys.argv) > 1:
         daemon = daemonocle.Daemon(
             worker=start,
             shutdown_callback=stop,
-            pidfile='/var/run/watchsync.pid',
+            pidfile=settings.get('pidfile', '/var/run/watchsync.pid')
             )
 
         daemon.do_action(sys.argv[1])
