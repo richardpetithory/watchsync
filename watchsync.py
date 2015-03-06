@@ -85,32 +85,36 @@ class RemoteSyncer(FileSystemEventHandler):
 
 
     def on_any_event(self, event):
-        # print event.event_type
-        # print event.is_directory
-        # print event.src_path
-
         sudo_as = []
 
         if self.watch.get('sudo_as', None):
-            sudo_as = ['sudo', '-H', '-u', str(self.watch.get('sudo_as'))]
+            sudo_as = ['/usr/bin/sudo', '-H', '-u', str(self.watch.get('sudo_as'))]
 
-        local_path = path.expanduser(self.watch.get('local_path'))
-        remote_path = path.expanduser(self.watch.get('remote_path'))
+        local_path = str(path.expanduser(self.watch.get('local_path')))
+        remote_path = str(path.expanduser(self.watch.get('remote_path')))
 
-        # command_args = sudo_as + [rsync_path, '-vaz', local_path+'/*', remote_path+'/']
-        command_args = sudo_as + ['ls', local_path+'/*']
+        command_args = sudo_as + [
+            rsync_path,
+            '-vazq',
+            '--executability',
+            '--delete',
+            local_path+'/',
+            remote_path
+            ]
 
-        process = subprocess.Popen(command_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+        process = subprocess.Popen(command_args)
+
+        stdout, stderr = process.communicate()
 
         while process.poll() == None:
-            line = process.stdout.readline().strip()
+            line = stdout.readline().strip()
 
             logging.debug(line)
 
 def start():
     logging.basicConfig(
         filename='/var/log/watchsync.log',
-        level=logging.DEBUG,
+        level=logging.WARN,
         format='%(asctime)s [%(levelname)s] %(message)s',
         )
 
